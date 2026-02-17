@@ -1,0 +1,111 @@
+invoiceID = invoice.get("invoice_id");
+organizationID = organization.get("organization_id");
+// FETCH INVOICE PDF
+file = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/invoices/" + invoiceID + "?organization_id=" + organizationID + "&accept=pdf"
+	type :GET
+	connection:"zohobookconnection"
+];
+info "Invoice PDF response ----> " + file;
+info "Is File ----> " + isFile(file);
+// FETCH INVOICE DETAILS
+response = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/invoices/" + invoiceID + "?organization_id=" + organizationID
+	type :GET
+	connection:"zohobookconnection"
+];
+info "Invoice Response ----> " + response;
+if(response.get("message") != "success" || response.getJSON("invoice") == null)
+{
+	info "Invalid Invoice response";
+	return;
+}
+data = response.getJSON("invoice");
+// INVOICE DATA
+invoice_id = data.get("invoice_id");
+customer_id = data.get("customer_id");
+invoice_number = data.get("invoice_number");
+invoice_date = data.get("date");
+if(invoice_date != null && invoice_date != "")
+{
+	invoice_date = invoice_date.toDate();
+}
+due_date = data.get("due_date");
+if(due_date != null && due_date != "")
+{
+	due_date = due_date.toDate();
+}
+status = data.get("status");
+total = data.get("total");
+salesperson = data.get("salesperson_name");
+// FETCH CUSTOMER FROM CREATOR
+search_customer = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Customers","Books_Customer_ID ==" + customer_id,1,1,"creatorapp");
+info "search_customer ----> " + search_customer;
+if(search_customer == null || !search_customer.containKey("data") || search_customer.get("data").isEmpty())
+{
+	info "Customer does not exist in Creator";
+	return;
+}
+customer = search_customer.get("data").get(0).get("ID").toLong();
+channel_data = search_customer.get("data").get(0).get("Channel_Partner");
+if(channel_data != null && channel_data.get("ID") != null)
+{
+	channel_partner = channel_data.get("ID").toLong();
+}
+// PREPARE INVOICE MAP
+dataMap = Map();
+dataMap.put("Books_Invoice_ID",invoice_id);
+dataMap.put("Books_Customer_ID",customer_id);
+dataMap.put("Invoice_No",invoice_number);
+dataMap.put("Invoice_Date",invoice_date);
+dataMap.put("Due_Date",due_date);
+dataMap.put("Status",status);
+dataMap.put("Total",total);
+dataMap.put("Sales_Person",salesperson);
+dataMap.put("Customer",customer);
+dataMap.put("Channel_Partner",channel_partner);
+info "Invoice Map ----> " + dataMap;
+// CHECK IF INVOICE EXISTS (UPSERT)
+search_invoice = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Invoices","Books_Invoice_ID == \"" + invoice_id + "\"",1,1,"creatorapp");
+info "search_invoice ----> " + search_invoice;
+recordId = null;
+isUpdate = false;
+if(search_invoice != null && search_invoice.containKey("data") && search_invoice.get("data").size() > 0)
+{
+	recordId = search_invoice.get("data").get(0).get("ID").toLong();
+	isUpdate = true;
+	update_response = zoho.creator.updateRecord("meydanfreezone","zoho-books-customer-portal","All_Invoices",recordId,dataMap,Map(),"creatorapp");
+	info "Invoice Updated ----> " + update_response;
+}
+else
+{
+	create_response = zoho.creator.createRecord("meydanfreezone","zoho-books-customer-portal","Invoices",dataMap,Map(),"creatorapp");
+	info "Invoice Created ----> " + create_response;
+	if(create_response.get("code") == 3000)
+	{
+		recordId = create_response.get("data").get("ID").toLong();
+	}
+}
+// UPLOAD / REPLACE PDF ATTACHMENT
+if(recordId != null && isFile(file))
+{
+	try 
+	{
+		file.setParamName("file");
+		upload_file = invokeurl
+		[
+			url :"https://www.zohoapis.com/creator/v2.1/data/meydanfreezone/zoho-books-customer-portal/report/All_Invoices/" + recordId + "/Invoice_Attachment/upload"
+			type :POST
+			files:file
+			connection:"creatorapp"
+		];
+		info "Invoice PDF Uploaded ----> " + upload_file;
+	}
+	catch (e)
+	{
+		info "Invoice PDF upload failed";
+		info e;
+	}
+}
