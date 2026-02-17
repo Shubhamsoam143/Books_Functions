@@ -1,0 +1,106 @@
+customerID = customer.get("contact_id");
+organizationID = organization.get("organization_id");
+// CHECK CUSTOMER EXISTS IN CREATOR (FIRST)
+search_customer = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Customers","Books_Customer_ID ==" + customerID,1,1,"creatorapp");
+info "search_customer----> " + search_customer;
+if(search_customer == null || !search_customer.containKey("data") || search_customer.get("data").size() == 0)
+{
+	info "Customer not found in Creator. Skipping update ----> " + customerID;
+	return;
+}
+creator_customer_id = search_customer.get("data").get(0).get("ID");
+info "creator_customer_id----> " + creator_customer_id;
+// FETCH CUSTOMER FROM ZOHO BOOKS
+response = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/contacts/" + customerID + "?organization_id=" + organizationID
+	type :GET
+	connection:"zohobookconnection"
+];
+info "Books Response ----> " + response;
+contact = response.getJSON("contact");
+companyName = ifnull(contact.get("contact_name"),"");
+email = ifnull(contact.get("email"),"");
+phone = ifnull(contact.get("phone"),"");
+source = ifnull(contact.get("source"),"");
+zcrm_accounts_id = ifnull(contact.get("zcrm_account_id"),"");
+zcrm_contacts_id = ifnull(contact.get("zcrm_contact_id"),"");
+status_raw = ifnull(contact.get("status"),"");
+if(status_raw.toLowerCase() == "active")
+{
+	status = "Active";
+}
+else
+{
+	status = "Inactive";
+}
+customer_name = ifnull(contact.get("first_name"),"") + " " + ifnull(contact.get("last_name"),"");
+customer_name = customer_name.trim();
+if(customer_name == "")
+{
+	customer_name = "-NA-";
+}
+// CHANNEL PARTNER HANDLING 
+creator_partner_id = null;
+if(zcrm_accounts_id != null && zcrm_accounts_id != "")
+{
+	account_crm = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/Accounts/" + zcrm_accounts_id
+		type :GET
+		connection:"zcrm"
+	];
+	if(account_crm.get("data") != null && account_crm.get("data").getJSON("Channel_Partner") != null && account_crm.get("data").getJSON("Channel_Partner") != "")
+	{
+		channel = ifnull(account_crm.get("data").getJSON("Channel_Partner"),"");
+		if(channel != null && channel.get("id") != null)
+		{
+			channel_partner_id = channel.get("id");
+			channel_partner_info = zoho.crm.getRecordById("Channel_Partners",channel_partner_id,"zcrm");
+			partner_Map = Map();
+			partner_Map.put("Channel_Partner_Name",ifnull(channel_partner_info.get("Name"),""));
+			partner_Map.put("Phone_Number",ifnull(channel_partner_info.get("Phone"),""));
+			partner_Map.put("Email",ifnull(channel_partner_info.get("Email"),""));
+			partner_Map.put("Channel_Partner_Tier",ifnull(channel_partner_info.get("Channel_Partner_Tier"),""));
+			partner_Map.put("Channel_Partner_Status",ifnull(channel_partner_info.get("Channel_Partner_Status"),""));
+			partner_Map.put("Channel_Partner_Stage",ifnull(channel_partner_info.get("Channel_Partner_Stage"),""));
+			partner_Map.put("Location",ifnull(channel_partner_info.get("Location"),""));
+			partner_Map.put("ZCRM_Partner_ID",channel_partner_id);
+			search_partner = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Channel_Partners","ZCRM_Partner_ID == \"" + channel_partner_id + "\"",1,1,"creatorapp");
+			if(search_partner != null && search_partner.containKey("data") && search_partner.get("data").size() > 0)
+			{
+				creator_partner_id = search_partner.get("data").get(0).get("ID");
+				info "creator_partner_id-----exist--> " + creator_partner_id;
+			}
+			else
+			{
+				create_partner = zoho.creator.createRecord("meydanfreezone","zoho-books-customer-portal","Channel_Partner",partner_Map,Map(),"creatorapp");
+				if(create_partner != null && create_partner.containKey("data"))
+				{
+					creator_partner_id = create_partner.getJSON("data").get("ID");
+				}
+			}
+		}
+	}
+}
+movementType = contact.get("cf_movement_type");
+info "movementType-----> " + movementType;
+if(movementType == "B2B to B2C")
+{
+	creator_partner_id = null;
+}
+// UPDATE CUSTOMER IN CREATOR ONLY(NO CREATE)
+creatorMap = Map();
+creatorMap.put("Company_Name",companyName);
+creatorMap.put("Customer_Name",customer_name);
+creatorMap.put("Phone_Number",phone);
+creatorMap.put("Email",email);
+creatorMap.put("Source",source);
+creatorMap.put("ZCRM_Account_ID",zcrm_accounts_id);
+creatorMap.put("ZCRM_Contact_ID",zcrm_contacts_id);
+creatorMap.put("Books_Customer_ID",customerID);
+creatorMap.put("Channel_Partner",creator_partner_id);
+creatorMap.put("Movement",movementType);
+creatorMap.put("Status",status);
+update_response = zoho.creator.updateRecord("meydanfreezone","zoho-books-customer-portal","All_Customers",creator_customer_id.toLong(),creatorMap,Map(),"creatorapp");
+info "Customer Updated ----> " + update_response;
