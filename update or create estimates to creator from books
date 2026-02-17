@@ -1,0 +1,112 @@
+estimateID = estimate.get("estimate_id");
+organizationID = organization.get("organization_id");
+// FETCH ESTIMATE PDF
+file = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/estimates/" + estimateID + "?organization_id=" + organizationID + "&accept=pdf"
+	type :GET
+	connection:"zohobookconnection"
+];
+info "Estimate PDF response ---> " + file;
+info "Is File ----> " + isFile(file);
+// FETCH ESTIMATE DETAILS
+response = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/estimates/" + estimateID + "?organization_id=" + organizationID
+	type :GET
+	connection:"zohobookconnection"
+];
+info "Estimate Response ----> " + response;
+if(response.get("message") != "success" || response.getJSON("estimate") == null)
+{
+	info "Invalid Estimate response";
+	return;
+}
+data = response.getJSON("estimate");
+// ESTIMATE DATA
+estimate_id = data.get("estimate_id");
+customer_id = data.get("customer_id");
+estimate_number = data.get("estimate_number");
+estimate_date = data.get("date");
+if(estimate_date != null && estimate_date != "")
+{
+	estimate_date = estimate_date.toDate();
+}
+expiry_date = data.get("expiry_date");
+if(expiry_date != null && expiry_date != "")
+{
+	expiry_date = expiry_date.toDate();
+}
+status = data.get("status");
+total = data.get("total");
+salesperson = data.get("salesperson_name");
+// FETCH CUSTOMER FROM CREATOR
+search_customer = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Customers","Books_Customer_ID ==" + customer_id,1,1,"creatorapp");
+info "search_customer ----> " + search_customer;
+if(search_customer == null || !search_customer.containKey("data") || search_customer.get("data").isEmpty())
+{
+	info "Customer doesn't exist in Creator";
+	return;
+}
+customer = search_customer.get("data").get(0).get("ID").toLong();
+channel_partner = null;
+channel_data = search_customer.get("data").get(0).get("Channel_Partner");
+if(channel_data != null && channel_data.get("ID") != null)
+{
+	channel_partner = channel_data.get("ID").toLong();
+}
+// PREPARE ESTIMATE MAP
+dataMap = Map();
+dataMap.put("Books_Estimate_ID",estimate_id);
+dataMap.put("Books_Customer_ID",customer_id);
+dataMap.put("Estimate_No",estimate_number);
+dataMap.put("Estimate_Date",estimate_date);
+dataMap.put("Expiry_Date",expiry_date);
+dataMap.put("Status",status);
+dataMap.put("Total",total);
+dataMap.put("Sales_Person",salesperson);
+dataMap.put("Customer",customer);
+dataMap.put("Channel_Partner",channel_partner);
+info "Estimate Map ----> " + dataMap;
+// CHECK IF ESTIMATE EXISTS (UPSERT)
+search_estimate = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Estimates","Books_Estimate_ID == \"" + estimate_id + "\"",1,1,"creatorapp");
+info "search_estimate ----> " + search_estimate;
+recordId = null;
+isUpdate = false;
+if(search_estimate != null && search_estimate.containKey("data") && search_estimate.get("data").size() > 0)
+{
+	recordId = search_estimate.get("data").get(0).get("ID").toLong();
+	isUpdate = true;
+	update_response = zoho.creator.updateRecord("meydanfreezone","zoho-books-customer-portal","All_Estimates",recordId,dataMap,Map(),"creatorapp");
+	info "Estimate Updated ----> " + update_response;
+}
+else
+{
+	create_response = zoho.creator.createRecord("meydanfreezone","zoho-books-customer-portal","Estimates",dataMap,Map(),"creatorapp");
+	info "Estimate Created ----> " + create_response;
+	if(create_response.get("code") == 3000)
+	{
+		recordId = create_response.get("data").get("ID").toLong();
+	}
+}
+// UPLOAD / REPLACE PDF ATTACHMENT
+if(recordId != null && isFile(file))
+{
+	try 
+	{
+		file.setParamName("file");
+		upload_file = invokeurl
+		[
+			url :"https://www.zohoapis.com/creator/v2.1/data/meydanfreezone/zoho-books-customer-portal/report/All_Estimates/" + recordId + "/Estimate_Attachment/upload"
+			type :POST
+			files:file
+			connection:"creatorapp"
+		];
+		info "File Uploaded ----> " + upload_file;
+	}
+	catch (e)
+	{
+		info "File upload failed";
+		info e;
+	}
+}
