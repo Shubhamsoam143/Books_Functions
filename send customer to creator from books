@@ -1,0 +1,110 @@
+customerID = customer.get("contact_id");
+// companyName = customer.get("company_name");
+organizationID = organization.get("organization_id");
+// info customer;
+response = invokeurl
+[
+	url :"https://www.zohoapis.com/books/v3/contacts/" + customerID + "?organization_id=" + organizationID
+	type :GET
+	connection:"zohobookconnection"
+];
+info response;
+companyName = response.getJSON("contact").get("contact_name");
+status = ifnull(response.getJSON("contact").get("status"),"");
+if(status == "active" || status == "Active")
+{
+	status = "Active";
+}
+else if(status == "inactive" || status == "Inactive")
+{
+	status = "Inactive";
+}
+info "contactName---->" + companyName;
+email = ifnull(response.getJSON("contact").get("email"),"");
+phone = ifnull(response.getJSON("contact").get("phone"),"");
+source = ifnull(response.getJSON("contact").get("source"),"");
+zcrm_accounts_id = ifnull(response.getJSON("contact").get("zcrm_account_id"),"");
+info "zcrm_accounts_id------> " + zcrm_accounts_id;
+zcrm_contacts_id = ifnull(response.getJSON("contact").get("zcrm_contact_id"),"");
+// getting channel partner information from the CRM
+if(zcrm_accounts_id != null && zcrm_accounts_id != "")
+{
+	account_crm = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/Accounts/" + zcrm_accounts_id
+		type :GET
+		connection:"zcrm"
+	];
+	info "account_crm---> " + account_crm;
+	if(account_crm.get("data") != null && account_crm.get("data").getJSON("Channel_Partner") != null && account_crm.get("data").getJSON("Channel_Partner") != "")
+	{
+		channel = ifnull(account_crm.get("data").getJSON("Channel_Partner"),"");
+		// 	channel_partner = ifnull(channel.get("name"),"");
+		channel_partner_id = ifnull(channel.get("id"),"");
+		// 	info "Channel----> " + channel;
+		info "Channel_Partner_id-----> " + channel_partner_id;
+		channel_partner_info = zoho.crm.getRecordById("Channel_Partners",channel_partner_id,"zcrm");
+		info "channel_partner_info-----> " + channel_partner_info;
+		partner_Map = Map();
+		partner_Map.put("Channel_Partner_Name",ifnull(channel_partner_info.get("Name"),""));
+		partner_Map.put("Phone_Number",ifnull(channel_partner_info.get("Phone"),""));
+		partner_Map.put("Email",ifnull(channel_partner_info.get("Email"),""));
+		partner_Map.put("Channel_Partner_Tier",ifnull(channel_partner_info.get("Channel_Partner_Tier"),""));
+		partner_Map.put("Channel_Partner_Status",ifnull(channel_partner_info.get("Channel_Partner_Status"),""));
+		partner_Map.put("Channel_Partner_Stage",ifnull(channel_partner_info.get("Channel_Partner_Stage"),""));
+		partner_Map.put("Location",ifnull(channel_partner_info.get("Location"),""));
+		partner_Map.put("ZCRM_Partner_ID",channel_partner_id);
+		info "partner_Map----> " + partner_Map;
+		creator_partner_id = null;
+		/* Search existing Channel Partner by ZCRM Partner ID */
+		search_partner = zoho.creator.getRecords("meydanfreezone","zoho-books-customer-portal","All_Channel_Partners","ZCRM_Partner_ID == \"" + channel_partner_id + "\"",1,1,"creatorapp");
+		info "search_partner-----> " + search_partner;
+		if(search_partner != null && search_partner.containKey("data") && search_partner.get("data").size() > 0)
+		{
+			creator_partner_id = search_partner.get("data").get(0).get("ID");
+			info "Existing Channel Partner found ----> " + creator_partner_id;
+		}
+		else
+		{
+			/*Create only if not exists */
+			otherMap = Map();
+			create_partner = zoho.creator.createRecord("meydanfreezone","zoho-books-customer-portal","Channel_Partner",partner_Map,otherMap,"creatorapp");
+			info "create_partner -----> " + create_partner;
+			if(create_partner != null && create_partner.containKey("data"))
+			{
+				creator_partner_id = create_partner.getJSON("data").get("ID");
+				info "New Channel Partner created ----> " + creator_partner_id;
+			}
+		}
+	}
+}
+creatorMap = Map();
+customer_name = ifnull(response.getJSON("contact").get("first_name"),"") + ifnull(response.getJSON("contact").get("last_name"),"");
+if(customer_name == null || customer_name == "")
+{
+	customer_name = "-NA-";
+}
+creatorMap.put("Company_Name",companyName);
+creatorMap.put("Customer_Name",customer_name);
+creatorMap.put("Phone_Number",phone);
+creatorMap.put("Email",email);
+creatorMap.put("Source",source);
+creatorMap.put("ZCRM_Account_ID",zcrm_accounts_id);
+creatorMap.put("ZCRM_Contact_ID",zcrm_contacts_id);
+creatorMap.put("Books_Customer_ID",customerID);
+creatorMap.put("Channel_Partner",creator_partner_id);
+creatorMap.put("Status",status);
+info creatorMap;
+dataMap = Map();
+dataList = List();
+dataList.add(creatorMap);
+dataMap.put("data",dataList);
+// send_data = zoho.creator.createRecord("meydanfreezone","zoho-books-customer-portal","Customer",creatorMap,otherMap,"creator");
+send_data = invokeurl
+[
+	url :"https://www.zohoapis.com/creator/v2.1/data/meydanfreezone/zoho-books-customer-portal/form/Customer"
+	type :POST
+	parameters:dataMap.toString()
+	connection:"creatorapp"
+];
+info "send_data----> " + send_data;
